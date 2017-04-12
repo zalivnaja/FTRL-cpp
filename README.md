@@ -1,8 +1,8 @@
 # FTRL-cpp
 
 Hi!
-
-This is simple implementation of FTRL-Proximal
+<br />
+This is simple implementation of FTRL-Proximal<br />
 <br />
 1) About: <br />
 -algorithm is taken from Ad Click Prediction: a View from the Trenches <br />
