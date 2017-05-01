@@ -9,6 +9,9 @@
 #include <iterator>
 #include <functional>
 #include <exception>
+#include <ctime>
+
+#include "MurmurHash3.cc"
 
 using namespace std;
 
@@ -30,13 +33,12 @@ std::vector<std::string> split(const std::string &s, char delim) {
     return elems;
 }
 
-
-std::string get_hash_feature(const std::string& _value, int _hash_size)
+std::string get_hash_feature(const std::string& _value, uint32_t _hash_size)
 {
     static std::hash<std::string> hash_fn;
+    uint32_t hash_value = std::abs(hash_fn(_value));
 
-    int hash_value = hash_fn(_value);
-    size_t hash = abs(hash_value) % _hash_size;
+    size_t hash = hash_value % _hash_size;
     return to_string(hash);
 }
 
@@ -50,17 +52,24 @@ public:
         std::istringstream ss(_row);
         std::string token;
 
-        int comp_count = _columns.size() - 1;
+        int comp_count = _columns.size();
 
         int current_comp = 0;
         while(std::getline(ss, token, ',')) 
         {
             if (current_comp + 1 < comp_count)
             {
-                auto value = token.c_str();
-                if (current_comp < _columns.size() - _categ_features_count)
+                const auto& value = token;
+
+                if (current_comp == 0)
                 {
-                    components_[_columns[current_comp]] = ::atof(value);
+                    ++current_comp;
+                    continue;
+                }
+
+                if (current_comp < _columns.size() - 1 - _categ_features_count)
+                {
+                    components_[_columns[current_comp]] = ::atof(value.c_str());
                 }
                 else
                 {
@@ -110,6 +119,7 @@ public:
 
             columns_ = split(columns_row, ',');
             numerical_columns_count_ = columns_.size() - 2 - _categ_features_count; // id and target
+            hashed_features_count_ = get_hashed_features_count();
             // std::cout << "columns_count_ " << columns_count_ << std::endl;
         }
         else
@@ -124,7 +134,7 @@ public:
         {
             if (getline(data_file_, line_))
             {
-                _row->fillFromStr(columns_, line_, categ_features_count_, get_hashed_features_count());
+                _row->fillFromStr(columns_, line_, categ_features_count_, hashed_features_count_);
                 return true;
             }
             else
@@ -153,6 +163,7 @@ public:
     int bits_;
     std::vector<std::string> columns_;
     int numerical_columns_count_;
+    int hashed_features_count_;
 };
 
 
@@ -179,6 +190,12 @@ float logloss(float _p, float _y, float _eps = 1e-5)
     return _y == 1 ? -log(_p) : -log(1 - _p);
 }
 
+struct NZ
+{
+    float n;
+    float z;
+};
+
 
 class FTRL
 {
@@ -202,19 +219,28 @@ public:
         w_.clear();
 
         float wx = 0;
+
         for (auto& x_i : _x.components_)
         {
             auto& i = x_i.first;
-            if (abs(z_[i]) <= L1_)
+
+            auto nz_i = nz_[i];
+            auto z_i = nz_i.z;
+            auto n_i = nz_i.n;
+
+            auto new_w_i = 0.0;
+
+            if (abs(z_i) <= L1_)
             {
-                w_[i] = 0;
+                new_w_i = 0;
             }
             else
             {
-                float sign = z_[i] < 0 ? -1 : 1;
-                w_[i] = (sign * L1_ - z_[i]) / ((beta_ + sqrt(n_[i])) / alpha_ + L2_);
+                float sign = z_i < 0 ? -1 : 1;
+                new_w_i = (sign * L1_ - z_i) / ((beta_ + sqrt(n_i)) / alpha_ + L2_);
             }
-            wx += w_[i] * x_i.second;
+            w_[i] = new_w_i;
+            wx += new_w_i * x_i.second;
         }
 
         return sigmoid(wx);
@@ -227,11 +253,19 @@ public:
         for (auto& comp : x.components_)
         {
             auto& i = comp.first;
-
             auto g_i = g * comp.second;
-            auto sigma_i = (sqrt(n_[i] + g_i * g_i) - sqrt(n_[i])) / alpha_;
-            z_[i] += g_i - sigma_i * w_[i];
-            n_[i] += g_i * g_i;
+            
+            auto nz_i = nz_[i];
+            auto z_i = nz_i.z;
+            auto n_i = nz_i.n;
+
+            auto sigma_i = (sqrt(n_i + g_i * g_i) - sqrt(n_i)) / alpha_;
+            z_i += g_i - sigma_i * w_[i];
+            n_i += g_i * g_i;
+            NZ new_nz;
+            new_nz.z = z_i;
+            new_nz.n = n_i;
+            nz_[i] = new_nz;
         }
     }
 
@@ -245,8 +279,7 @@ private:
     int categ_features_count_;
     std::vector<std::string> columns_;
 
-    unordered_map<string, float> n_;
-    unordered_map<string, float> z_;
+    unordered_map<string, NZ> nz_;
     unordered_map<string, float> w_;
 };
 
@@ -255,8 +288,8 @@ int main()
     int bits = 4;
 
     // TODO : unhard-code it
+    // const string& filename = "categ_testdata0.csv";
     // int categ_features_count = 0;
-    // const string& filename = "testdata.csv";
 
     const string& filename = "categ_testdata.csv";
     int categ_features_count = 10;
@@ -266,7 +299,12 @@ int main()
 
     Row row;
     int i = 0;
-    int passes = 1000;
+    int passes = 10;
+
+    int t_predict = 0;   // get time now
+    int t_logloss = 0;   // get time now
+    int t_update = 0;   // get time now
+    time_t t0 = time(0);   // get time now
 
     for (int pass_i = 0; pass_i < passes; ++pass_i)
     {
@@ -275,13 +313,25 @@ int main()
         DataProvider dataProvider(filename, categ_features_count, bits);
         while (dataProvider.TryGetNextRow(&row))
         {
+            time_t t1 = time(0);   // get time now
             float p = ftrl.predict(row);
+            t_predict += time(0) - t1;
+
+            t1 = time(0);
             loss += logloss(p, row.target_);
+            t_logloss += time(0) - t1;
+
+            t1 = time(0);
             ftrl.update(row, p, row.target_);
+            t_update += time(0) - t1;
         }
 
         std::cout << pass_i << ", " << loss << std::endl;
     }
+    std::cout << "t_predict" << t_predict << std::endl;
+    std::cout << "t_logloss" << t_logloss << std::endl;
+    std::cout << "t_update" << t_update << std::endl;
+    std::cout << time(0) - t0 << std::endl;
 
     return 0;
 }

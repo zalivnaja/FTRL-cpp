@@ -47,7 +47,11 @@ def generate_simple_test(filename):
             p = sigmoid(full_dummy_x.dot(w) + b)
             ys = bernoulli.rvs(p, size=bernoulli_count)
             
-            str_x = ', '.join(["{0:.2f}".format(x_i) for x_i in x[0]]) + ', ' + ', '.join([str(x_i) for x_i in cat_x[0]])
+            delim = ''
+            if categorical_count > 0:
+                delim = ', '
+
+            str_x = ', '.join(["{0:.2f}".format(x_i) for x_i in x[0]]) + delim + ', '.join([str(x_i) for x_i in cat_x[0]])
             # str_x = np.array2string(full_x[0], precision=2, separator=',', suppress_small=True)
 
             # print(str_x)
