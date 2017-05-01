@@ -11,8 +11,6 @@
 #include <exception>
 #include <ctime>
 
-#include "MurmurHash3.cc"
-
 using namespace std;
 
 
@@ -301,11 +299,6 @@ int main()
     int i = 0;
     int passes = 10;
 
-    int t_predict = 0;   // get time now
-    int t_logloss = 0;   // get time now
-    int t_update = 0;   // get time now
-    time_t t0 = time(0);   // get time now
-
     for (int pass_i = 0; pass_i < passes; ++pass_i)
     {
         float loss = 0;
@@ -313,25 +306,13 @@ int main()
         DataProvider dataProvider(filename, categ_features_count, bits);
         while (dataProvider.TryGetNextRow(&row))
         {
-            time_t t1 = time(0);   // get time now
             float p = ftrl.predict(row);
-            t_predict += time(0) - t1;
-
-            t1 = time(0);
             loss += logloss(p, row.target_);
-            t_logloss += time(0) - t1;
-
-            t1 = time(0);
             ftrl.update(row, p, row.target_);
-            t_update += time(0) - t1;
         }
 
         std::cout << pass_i << ", " << loss << std::endl;
     }
-    std::cout << "t_predict" << t_predict << std::endl;
-    std::cout << "t_logloss" << t_logloss << std::endl;
-    std::cout << "t_update" << t_update << std::endl;
-    std::cout << time(0) - t0 << std::endl;
 
     return 0;
 }
